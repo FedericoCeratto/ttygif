@@ -34,6 +34,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <getopt.h>
+#include <limits.h>
 #include <unistd.h>
 #include <termios.h>
 #include <sys/time.h>
@@ -198,6 +200,8 @@ ttyplay (FILE *fp, ReadFunc read_func, WriteFunc write_func, Options o)
     StringBuilder_write(sb, "convert -loop 0 ");
 
     int nskipped = 0;
+    int total_skipped = 0;
+    int total_written = 0;
     bool skip = false;
 
     while (true) {
@@ -245,6 +249,9 @@ ttyplay (FILE *fp, ReadFunc read_func, WriteFunc write_func, Options o)
             if (take_snapshot(img_path, o) != 0) {
                 fatalf("Error: Failed to take snapshot");
             }
+            total_written++;
+        } else {
+            total_skipped++;
         }
         if (index == 0 || !skip) {
             index++;
@@ -258,6 +265,11 @@ ttyplay (FILE *fp, ReadFunc read_func, WriteFunc write_func, Options o)
     StringBuilder_write(sb, o.out_file);
     StringBuilder_write(sb, " 2>&1");
 
+    if (total_skipped) {
+      printf("%d frames written, %d skipped\n", total_written, total_skipped);
+    } else {
+      printf("%d frames written\n", total_written);
+    }
     printf("Creating Animated GIF ... this can take a while\n");
     system_exec(sb->s, o);
     printf("Created: %s in the current directory!\n", o.out_file);
@@ -279,6 +291,8 @@ usage (void)
 #else
     printf("Usage: ttygif [FILE]\n");
 #endif
+    printf("  -s, --skip-threshold : frame skip threshold (ms) (default: 0)\n");
+    printf("  -l, --skip-limit : frame skip limit (default: unlimited)\n");
     printf("  -h, --help : print this help\n");
     printf("  -v, --version : print version\n");
 }
@@ -293,7 +307,7 @@ main (int argc, char **argv)
 
     Options options;
     options.fullscreen = false;
-    options.skip_limit = 5;
+    options.skip_limit = INT_MAX;
     options.skip_threshold = 0;
     options.debug = getenv("TTYGIF_DEBUG") != NULL;
     options.out_file = "tty.gif";
@@ -348,16 +362,35 @@ main (int argc, char **argv)
         }
     }
 
-    if (argc >= 3) {
-        if (strstr(argv[2], "-f") || strstr(argv[2], "--fullscreen")) {
-            options.fullscreen = true;
-        }
-    }
-
     set_progname(argv[0]);
     input = efopen(argv[1], "r");
-
     assert(input != NULL);
+
+    static struct option long_options[] = {
+        {"fullscreen",     no_argument,       0,  'f' },
+        {"skip-limit",     required_argument, 0,  'l' },
+        {"skip-threshold", required_argument, 0,  's' },
+        {0,                0,                 0,  0   }
+    };
+
+    int long_index = 0;
+    int opt = 0;
+    while ((opt = getopt_long(argc, argv,"fl:s:", long_options, &long_index )) != -1) {
+        switch (opt) {
+            case 'f' :
+                options.fullscreen = true;
+                break;
+            case 's' :
+                options.skip_threshold = atoi(optarg);
+                break;
+            case 'l' :
+                options.skip_limit = atoi(optarg);
+                break;
+            default:
+                usage();
+                exit(EXIT_SUCCESS);
+        }
+    }
 
     tcgetattr(0, &old); /* Get current terminal state */
     new = old;          /* Make a copy */
